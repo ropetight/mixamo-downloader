@@ -93,20 +93,30 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         self.page.console_message.connect(self.on_console_message)
 
     def _build_widgets(self):
-        """Build every widget below the browser."""
-        central_widget = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(central_widget)
-        layout.setSpacing(10)
+        """Build the window: browser on top, controls and log below.
 
-        layout.addWidget(self.browser, stretch=1)
-        layout.addWidget(self._build_options())
-        layout.addWidget(self._build_export_options())
-        layout.addWidget(self._build_output())
-        layout.addLayout(self._build_actions())
-        layout.addWidget(self._build_progress())
-        layout.addWidget(self._build_log())
+        Everything sits in a vertical splitter so the browser can be given
+        as much of the window as the user wants; the controls are laid out
+        in three columns, which suits a wide window far better than one tall
+        stack of full-width rows.
+        """
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(8)
 
-        self.setCentralWidget(central_widget)
+        self.browser.setMinimumHeight(200)
+        self.splitter.addWidget(self.browser)
+        self.splitter.addWidget(self._build_columns())
+        self.splitter.addWidget(self._build_log())
+
+        # Only the browser grows when the window does; the controls keep the
+        # height they need and the log keeps whatever it was dragged to.
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes([620, 200, 170])
+
+        self.setCentralWidget(self.splitter)
         self.setStatusBar(QtWidgets.QStatusBar())
 
         self.tray = None
@@ -115,13 +125,52 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
             self.tray.setToolTip("Mixamo Downloader")
             self.tray.show()
 
+    def _build_columns(self):
+        """Lay the three control panels out side by side.
+
+        :rtype: QtWidgets.QWidget
+        """
+        strip = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(strip)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        # Roughly equal columns, with the options panel a little wider since
+        # it holds five dropdowns and their labels.
+        layout.addWidget(self._build_options(), 3)
+        layout.addWidget(self._build_export_options(), 4)
+        layout.addWidget(self._build_run_panel(), 4)
+
+        return strip
+
+    def _build_run_panel(self):
+        """Build the output folder, the buttons and the progress readout.
+
+        :rtype: QtWidgets.QWidget
+        """
+        box = QtWidgets.QGroupBox("Output folder")
+        box.setMinimumWidth(280)
+
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setSpacing(8)
+
+        layout.addLayout(self._build_output())
+        layout.addLayout(self._build_actions())
+        layout.addWidget(self._build_progress())
+        layout.addStretch(1)
+
+        return box
+
     def _build_options(self):
         """Build the download mode options.
 
         :rtype: QtWidgets.QWidget
         """
         box = QtWidgets.QGroupBox("What to download")
-        layout = QtWidgets.QHBoxLayout(box)
+        box.setMinimumWidth(220)
+
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setSpacing(6)
 
         self.rb_all = QtWidgets.QRadioButton("All animations")
         self.rb_all.setChecked(True)
@@ -148,11 +197,19 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
             "Animations recorded in the output folder's manifest, or already "
             "present there as FBX files, are skipped.")
 
-        for widget in (self.rb_all, self.rb_query, self.le_query,
-                       self.rb_tpose):
-            layout.addWidget(widget)
+        layout.addWidget(self.rb_all)
+        layout.addWidget(self.rb_query)
 
+        # Indent the keyword field under the radio button it belongs to.
+        query_row = QtWidgets.QHBoxLayout()
+        query_row.addSpacing(20)
+        query_row.addWidget(self.le_query)
+        layout.addLayout(query_row)
+
+        layout.addWidget(self.rb_tpose)
         layout.addStretch(1)
+
+        self.cb_resume.setText("Resume (skip existing)")
         layout.addWidget(self.cb_resume)
 
         return box
@@ -167,7 +224,18 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         :rtype: QtWidgets.QWidget
         """
         self.export_box = box = QtWidgets.QGroupBox("Download options")
-        layout = QtWidgets.QHBoxLayout(box)
+        box.setMinimumWidth(260)
+
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setSpacing(6)
+
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(6)
+        layout.addLayout(form)
 
         self.pref_combos = {}
 
@@ -179,12 +247,12 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
             for text, value in choices:
                 combo.addItem(text, value)
             combo.setCurrentIndex(0)
+            # Fill the column rather than leaving a ragged right edge.
+            combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                                QtWidgets.QSizePolicy.Policy.Fixed)
 
             self.pref_combos[name] = combo
-
-            layout.addWidget(QtWidgets.QLabel(f"{label}:"))
-            layout.addWidget(combo)
-            layout.addSpacing(12)
+            form.addRow(f"{label}:", combo)
 
         self.pref_combos["skin"].setToolTip(
             "Animations are exported without a mesh by default. The T-Pose "
@@ -198,11 +266,15 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
 
         layout.addStretch(1)
 
-        reset = QtWidgets.QPushButton("Reset")
+        reset = QtWidgets.QPushButton("Reset to defaults")
         reset.setToolTip("Back to FBX Binary, Without Skin, 30fps, no "
                          "keyframe reduction.")
         reset.clicked.connect(self.reset_preferences)
-        layout.addWidget(reset)
+
+        reset_row = QtWidgets.QHBoxLayout()
+        reset_row.addStretch(1)
+        reset_row.addWidget(reset)
+        layout.addLayout(reset_row)
 
         return box
 
@@ -251,16 +323,14 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         self.log("info", "Download options reset to their defaults.")
 
     def _build_output(self):
-        """Build the output folder picker.
+        """Build the output folder picker row.
 
-        :rtype: QtWidgets.QWidget
+        :rtype: QtWidgets.QHBoxLayout
         """
-        box = QtWidgets.QGroupBox("Output folder")
-        layout = QtWidgets.QHBoxLayout(box)
+        layout = QtWidgets.QHBoxLayout()
 
         self.le_path = QtWidgets.QLineEdit()
-        self.le_path.setPlaceholderText(
-            "Leave empty to download next to the application.")
+        self.le_path.setPlaceholderText("Next to the application")
 
         browse = QtWidgets.QToolButton()
         browse.setIcon(self.style().standardIcon(
@@ -278,7 +348,7 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         layout.addWidget(browse)
         layout.addWidget(reveal)
 
-        return box
+        return layout
 
     def _build_actions(self):
         """Build the Start/Stop buttons.
@@ -319,6 +389,12 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
 
         self.lbl_item = QtWidgets.QLabel("Idle.")
         self.lbl_item.setStyleSheet("color: #888888;")
+        # A long animation name must not be able to widen the column.
+        self.lbl_item.setWordWrap(False)
+        self.lbl_item.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.lbl_item.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
 
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.lbl_item)
@@ -333,16 +409,21 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(5000)
-        self.log_view.setMinimumHeight(120)
+        self.log_view.setMinimumHeight(60)
         self.log_view.setFont(QtGui.QFontDatabase.systemFont(
             QtGui.QFontDatabase.SystemFont.FixedFont))
 
         box = QtWidgets.QGroupBox("Log")
         box.setCheckable(True)
         box.setChecked(True)
+        box.setMinimumHeight(60)
+
         layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(self.log_view)
 
+        # Unticking the group collapses the log and hands the room back to
+        # the browser.
         box.toggled.connect(self.log_view.setVisible)
 
         return box
@@ -352,7 +433,17 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     def _restore_settings(self):
-        """Restore the options the user picked last time."""
+        """Restore the options and the layout the user left behind."""
+        geometry = self.settings.value("geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+
+        # How the browser, the controls and the log share the window is a
+        # per-user preference, so keep whatever they dragged it to.
+        splitter_state = self.settings.value("splitter")
+        if splitter_state:
+            self.splitter.restoreState(splitter_state)
+
         self.le_path.setText(self.settings.value("output_path", "", str))
         self.le_query.setText(self.settings.value("query", "", str))
         self.cb_resume.setChecked(
@@ -370,7 +461,9 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
                 combo.setCurrentIndex(index)
 
     def _store_settings(self):
-        """Remember the current options for the next session."""
+        """Remember the current options and layout for the next session."""
+        self.settings.setValue("geometry", self.saveGeometry())
+        self.settings.setValue("splitter", self.splitter.saveState())
         self.settings.setValue("output_path", self.le_path.text())
         self.settings.setValue("query", self.le_query.text())
         self.settings.setValue("resume", self.cb_resume.isChecked())

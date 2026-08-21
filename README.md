@@ -37,6 +37,8 @@ If you don't have Python installed on your computer or you don't want to mess wi
 6. Press the `Start download` button and wait until it's done.
 7. You can cancel the process at any time by pressing the `Stop` button.
 
+The controls sit in three columns under the browser -- what to download, how to export it, and where it goes with the buttons and progress -- and the log runs across the bottom. Everything is inside a splitter: drag the handle above the controls to give the Mixamo page more of the window, untick **Log** to fold the log away, and the position is remembered along with the window size.
+
 > [!IMPORTANT]
 > Downloading all animations can be quite slow. We're dealing with a total of 2346 animations, so don't expect it to be lighting fast.
 

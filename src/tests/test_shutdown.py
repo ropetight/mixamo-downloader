@@ -10,46 +10,8 @@ The window is built on the offscreen platform with the page load stubbed out,
 so nothing here needs a display or the network.
 """
 
-# Stdlib modules
-import os
-
 # Third-party modules
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-
-@pytest.fixture(scope="module")
-def qt_app():
-    """A QApplication for the whole module, or a skip if Qt cannot start."""
-    try:
-        from PySide6 import QtWidgets
-    except ImportError:  # pragma: no cover - PySide6 is a hard dependency
-        pytest.skip("PySide6 is not available")
-
-    app = QtWidgets.QApplication.instance()
-    if app is None:
-        app = QtWidgets.QApplication([])
-
-    yield app
-
-
-@pytest.fixture
-def window(qt_app, monkeypatch):
-    """A main window whose browser never leaves the machine."""
-    import webpage
-
-    # Loading mixamo.com would make the suite need a network.
-    monkeypatch.setattr(webpage.CustomWebPage, "setUrl",
-                        lambda self, url: None)
-
-    from ui import MixamoDownloaderUI
-
-    made = MixamoDownloaderUI()
-    yield made
-
-    if made.browser is not None or made.page is not None:
-        made.shutdown()
 
 
 class FakeTray:

@@ -256,3 +256,50 @@ def network_error(message="connection reset"):
     :rtype: requests.RequestException
     """
     return requests.RequestException(message)
+
+
+@pytest.fixture(scope="session")
+def qt_app():
+    """A QApplication for the whole session, or a skip if Qt cannot start.
+
+    Imported lazily: the tests that never touch the UI should not pay for
+    loading Qt at collection time.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    try:
+        from PySide6 import QtWidgets
+    except ImportError:  # pragma: no cover - PySide6 is a hard dependency
+        pytest.skip("PySide6 is not available")
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    yield app
+
+
+@pytest.fixture
+def window(qt_app, monkeypatch, tmp_path):
+    """A main window that neither loads a page nor touches real settings."""
+    import webpage
+
+    # Loading mixamo.com would make the suite need a network.
+    monkeypatch.setattr(webpage.CustomWebPage, "setUrl",
+                        lambda self, url: None)
+
+    from PySide6 import QtCore
+
+    # Keep the developer's own saved options out of the tests, and the
+    # tests out of the developer's options.
+    monkeypatch.setattr(
+        QtCore.QSettings, "fileName", lambda self: str(tmp_path / "s.ini"))
+
+    from ui import MixamoDownloaderUI
+
+    made = MixamoDownloaderUI()
+    made.settings = QtCore.QSettings(
+        str(tmp_path / "settings.ini"), QtCore.QSettings.Format.IniFormat)
+
+    yield made
+
+    if made.browser is not None or made.page is not None:
+        made.shutdown()
