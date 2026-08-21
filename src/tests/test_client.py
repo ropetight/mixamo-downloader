@@ -10,9 +10,9 @@ import pytest
 # Local modules
 from conftest import (FakeResponse, fbx_bytes, network_error,
                       queue_handler, route_handler)
-from mixamo.client import (API, PREFERENCE_CHOICES, MixamoClient,
-                           default_preferences, safe_filename,
-                           valid_preferences)
+from mixamo.client import (API, FORMATS, PREFERENCE_CHOICES,
+                           MixamoClient, default_preferences,
+                           safe_filename, valid_preferences)
 from mixamo.errors import (ApiError, AuthError, ExportFailed, ExportTimeout,
                            RateLimited, Stopped, TransientError)
 from mixamo.tokens import TokenProvider
@@ -287,7 +287,7 @@ class TestPayloads:
 
         assert preferences == {
             "format": "fbx7_2019",   # FBX Binary, one file per animation
-            "skin": False,           # no mesh, no bind pose
+            "skin": "false",         # no mesh, no bind pose
             "fps": "30",
             "reducekf": "0",         # keyframe reduction: none
         }
@@ -484,9 +484,10 @@ class TestPreferenceChoices:
     def test_the_first_choice_of_each_is_the_default(self):
         client_defaults = {
             "export_format": "fbx7_2019",
-            "skin": False,
+            "skin": "false",
             "fps": "30",
             "reduce_kf": "0",
+            "mesh": "t-pose",
         }
 
         assert default_preferences() == client_defaults
@@ -521,7 +522,7 @@ class TestPreferenceChoices:
             "description": "Walking",
             "type": "Motion",
             "details": {"gms_hash": {"params": [], "trim": [0, 100]}},
-        })]), **valid_preferences({"fps": "24", "skin": True,
+        })]), **valid_preferences({"fps": "24", "skin": "true",
                                    "reduce_kf": "2"}))
 
         import json as _json
@@ -529,5 +530,97 @@ class TestPreferenceChoices:
             client.animation_payload("char-1", "anim-1")[0])["preferences"]
 
         assert preferences["fps"] == "24"
-        assert preferences["skin"] is True
+        assert preferences["skin"] == "true"
         assert preferences["reducekf"] == "2"
+
+
+class TestFormats:
+    """The format table is copied from Mixamo's own front end."""
+
+    def test_offers_every_format_mixamo_does(self):
+        assert [label for label, _, _, _ in FORMATS] == [
+            "FBX Binary(.fbx)",
+            "FBX ASCII(.fbx)",
+            "FBX for Unity(.fbx)",
+            "FBX 7.4(.fbx)",
+            "FBX 6.1(.fbx)",
+            "Collada(.dae)",
+        ]
+
+    def test_sends_the_value_mixamo_uses(self):
+        assert [value for _, value, _, _ in FORMATS] == [
+            "fbx7_2019",
+            "fbx7_2019_ascii",
+            "fbx7_unity",
+            "fbx7_2014",
+            "fbx6",
+            "dae_mixamo",
+        ]
+
+    def test_the_extension_follows_the_format(self, make_client):
+        client, _ = make_client(queue_handler([]))
+
+        assert client.extension == ".fbx"
+
+        client.export_format = "dae_mixamo"
+        assert client.extension == ".dae"
+
+    def test_collada_is_checked_against_xml_not_fbx(self, make_client,
+                                                    tmp_path):
+        client, _ = make_client(queue_handler([FakeResponse(
+            200, content=b"<?xml version='1.0'?><COLLADA/>")]),
+            export_format="dae_mixamo")
+
+        dest = tmp_path / "Walking.dae"
+        client.download("https://cdn/f.dae", str(dest))
+
+        assert dest.exists()
+
+    def test_ascii_fbx_is_checked_against_its_own_header(self, make_client,
+                                                         tmp_path):
+        client, _ = make_client(queue_handler([FakeResponse(
+            200, content=b"; FBX 7.4.0 project file\nObjects: {")]),
+            export_format="fbx7_2019_ascii")
+
+        dest = tmp_path / "Walking.fbx"
+        client.download("https://cdn/f.fbx", str(dest))
+
+        assert dest.exists()
+
+    def test_a_binary_fbx_is_rejected_when_ascii_was_asked_for(
+            self, make_client, tmp_path):
+        client, _ = make_client(
+            queue_handler([FakeResponse(200, content=fbx_bytes())]),
+            export_format="fbx7_2019_ascii")
+
+        with pytest.raises(ApiError, match="fbx7_2019_ascii"):
+            client.download("https://cdn/f.fbx", str(tmp_path / "a.fbx"))
+
+    def test_a_format_with_no_known_signature_still_rejects_an_error_page(
+            self, make_client, tmp_path):
+        # fbx6's signature is not pinned down, but an HTML page never is one.
+        client, _ = make_client(
+            queue_handler([FakeResponse(200, content=b"<html>nope</html>")]),
+            export_format="fbx6")
+
+        with pytest.raises(ApiError, match="HTML page"):
+            client.download("https://cdn/f.fbx", str(tmp_path / "a.fbx"))
+
+    def test_a_format_with_no_known_signature_accepts_anything_plausible(
+            self, make_client, tmp_path):
+        client, _ = make_client(
+            queue_handler([FakeResponse(200, content=b"\x00binary-ish")]),
+            export_format="fbx6")
+
+        dest = tmp_path / "a.fbx"
+        client.download("https://cdn/f.fbx", str(dest))
+
+        assert dest.exists()
+
+    def test_the_pose_reaches_the_character_payload(self, make_client):
+        client, _ = make_client(queue_handler([]), mesh="original")
+
+        import json as _json
+        data = _json.loads(client.tpose_payload("char-1", "Victoria"))
+
+        assert data["preferences"]["mesh"] == "original"

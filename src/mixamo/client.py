@@ -34,35 +34,59 @@ BASE_HEADERS = {
 # Status codes worth trying again: throttling, gateway hiccups, timeouts.
 RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
+# Signatures a download can legitimately start with. Anything else on a
+# download link is an error page or an unexpected archive, not an export.
+FBX_BINARY_MAGIC = b"Kaydara FBX Binary"
+FBX_ASCII_MAGIC = b"; FBX"
+COLLADA_MAGIC = b"<?xml"
+
+# Every download format Mixamo offers, taken verbatim from the table in its
+# own front-end bundle, plus the extension and the file signature each one
+# produces. `magic` is None where the signature is not known for certain; the
+# download is then only checked for the obvious wrong answers.
+FORMATS = (
+    ("FBX Binary(.fbx)", "fbx7_2019", ".fbx", FBX_BINARY_MAGIC),
+    ("FBX ASCII(.fbx)", "fbx7_2019_ascii", ".fbx", FBX_ASCII_MAGIC),
+    ("FBX for Unity(.fbx)", "fbx7_unity", ".fbx", FBX_BINARY_MAGIC),
+    ("FBX 7.4(.fbx)", "fbx7_2014", ".fbx", FBX_BINARY_MAGIC),
+    ("FBX 6.1(.fbx)", "fbx6", ".fbx", None),
+    ("Collada(.dae)", "dae_mixamo", ".dae", COLLADA_MAGIC),
+)
+
+FORMAT_EXTENSIONS = {value: extension for _, value, extension, _ in FORMATS}
+FORMAT_MAGIC = {value: magic for _, value, _, magic in FORMATS}
+
 # Export preferences, named after the fields in Mixamo's own download dialog.
 #
-# FORMAT      "FBX Binary(.fbx)". Mixamo answers with a single Kaydara binary
-#             FBX per animation -- never a pack, never a zip.
-# SKIN        "Without Skin": animation only, no mesh, no bind pose. Only the
-#             T-Pose export carries a skin, and it asks for one explicitly.
+# FORMAT      "FBX Binary(.fbx)": one Kaydara binary FBX per animation, never
+#             a pack and never a zip.
+# SKIN        "Without Skin": animation only, no mesh, no bind pose. Mixamo
+#             sends these as the strings "true"/"false", not as booleans.
 # FPS         "Frames per Second". Mixamo accepts "24", "30" and "60".
 # REDUCE_KF   "Keyframe Reduction". "0" is none, which keeps every key Mixamo
 #             baked; anything else drops keys and softens the motion.
+# MESH        "Pose", used by the character (T-Pose) export only.
+#
+# Mixamo's own defaults are format fbx7_2019, skin "true", 30fps, reducekf
+# "0" and mesh "t-pose". The only one this tool differs on is the skin: bulk
+# animation downloads are wanted without a mesh.
 DEFAULT_FORMAT = "fbx7_2019"
-DEFAULT_SKIN = False
+DEFAULT_SKIN = "false"
 DEFAULT_FPS = "30"
 DEFAULT_REDUCE_KF = "0"
+DEFAULT_MESH = "t-pose"
 
 # The values each preference accepts, as (label shown to the user, value sent
 # to Mixamo). The UI builds its dropdowns from these, so it cannot offer a
 # value the API would reject -- and the first entry of each is the default.
 #
-# Only the defaults are verified against live Mixamo; the alternatives come
-# from its download dialog. A wrong value cannot corrupt a download: the
-# binary FBX check in `download` rejects whatever comes back instead.
-FORMAT_CHOICES = (
-    ("FBX Binary(.fbx)", "fbx7_2019"),
-    ("FBX for Unity(.fbx)", "fbx7unity"),
-)
+# Labels and values are Mixamo's, so any of them is a value its own client
+# sends. What is not verified is how a given rig behaves in a given format.
+FORMAT_CHOICES = tuple((label, value) for label, value, _, _ in FORMATS)
 
 SKIN_CHOICES = (
-    ("Without Skin", False),
-    ("With Skin", True),
+    ("Without Skin", "false"),
+    ("With Skin", "true"),
 )
 
 FPS_CHOICES = (
@@ -77,12 +101,18 @@ REDUCE_KF_CHOICES = (
     ("non-uniform", "2"),
 )
 
+MESH_CHOICES = (
+    ("T-pose", "t-pose"),
+    ("Original Pose", "original"),
+)
+
 # Every preference the UI can set, keyed by the client attribute it drives.
 PREFERENCE_CHOICES = {
     "export_format": ("Format", FORMAT_CHOICES),
     "skin": ("Skin", SKIN_CHOICES),
     "fps": ("Frames per Second", FPS_CHOICES),
     "reduce_kf": ("Keyframe Reduction", REDUCE_KF_CHOICES),
+    "mesh": ("Pose", MESH_CHOICES),
 }
 
 
@@ -117,10 +147,6 @@ def valid_preferences(preferences):
 
     return checked
 
-
-# First bytes of a Kaydara binary FBX. Anything else coming back on a download
-# link is an error page or an unexpected archive, not an animation.
-FBX_MAGIC = b"Kaydara FBX Binary"
 
 # Characters Windows and Linux disagree about; strip them from file names.
 ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -171,7 +197,8 @@ class MixamoClient:
                  max_retries=4, backoff=1.5, sleep=None,
                  poll_interval=1.0, export_timeout=300.0, clock=time.monotonic,
                  export_format=DEFAULT_FORMAT, skin=DEFAULT_SKIN,
-                 fps=DEFAULT_FPS, reduce_kf=DEFAULT_REDUCE_KF):
+                 fps=DEFAULT_FPS, reduce_kf=DEFAULT_REDUCE_KF,
+                 mesh=DEFAULT_MESH):
         """Initialize the client.
 
         :param tokens: Provider handing out (and refreshing) bearer tokens
@@ -214,6 +241,9 @@ class MixamoClient:
         :param reduce_kf: Keyframe reduction, "0" for none
         :type reduce_kf: str
 
+        :param mesh: Pose used by the character export ("t-pose"/"original")
+        :type mesh: str
+
         :param clock: Monotonic time source
         :type clock: callable
         """
@@ -229,8 +259,26 @@ class MixamoClient:
         self.export_format = export_format
         self.skin = skin
         self.fps = fps
+        self.mesh = mesh
         self.reduce_kf = reduce_kf
         self._sleep = sleep or self._interruptible_sleep
+
+    @property
+    def extension(self):
+        """File extension produced by the selected format, dot included.
+
+        :rtype: str
+        """
+        return FORMAT_EXTENSIONS.get(self.export_format, ".fbx")
+
+    @property
+    def expected_magic(self):
+        """Signature a download in the selected format must start with.
+
+        :return: Expected first bytes, or None when they are not known
+        :rtype: bytes or None
+        """
+        return FORMAT_MAGIC.get(self.export_format, FBX_BINARY_MAGIC)
 
     # ------------------------------------------------------------------
     # Plumbing
@@ -508,7 +556,8 @@ class MixamoClient:
             "character_id": character_id,
             "product_name": character_name,
             "type": "Character",
-            "preferences": {"format": self.export_format, "mesh": "t-pose"},
+            "preferences": {"format": self.export_format,
+                            "mesh": self.mesh},
             "gms_hash": None,
         }
 
@@ -559,7 +608,7 @@ class MixamoClient:
 
             self._sleep(self.poll_interval)
 
-    def download(self, url, dest_path, chunk_size=65536, verify_fbx=True):
+    def download(self, url, dest_path, chunk_size=65536, verify=True):
         """Stream an exported FBX to disk.
 
         The file is written to a temporary '.part' file and only renamed once
@@ -572,15 +621,20 @@ class MixamoClient:
         :param dest_path: Final path of the FBX on disk
         :type dest_path: str
 
-        :param verify_fbx: Reject anything that is not a binary FBX
-        :type verify_fbx: bool
+        :param verify: Reject a body that does not look like the selected
+            export format
+        :type verify: bool
 
         :return: Number of bytes written
         :rtype: int
 
         :raises Stopped: The user pressed Stop mid-download
-        :raises ApiError: The link served something other than a binary FBX
+        :raises ApiError: The link served something other than an export
         """
+        magic = self.expected_magic if verify else None
+        # Even a format whose signature is unknown must not silently accept
+        # an error page or an archive.
+        sniff = len(magic) if magic else max(len(b"PK"), len(b"<"))
         response = self.request("GET", url, stream=True, authenticated=False)
 
         directory = os.path.dirname(dest_path)
@@ -598,20 +652,26 @@ class MixamoClient:
                     # download instead of waiting for the whole file.
                     self._check_stop()
                     if chunk:
-                        if len(head) < len(FBX_MAGIC):
-                            head += chunk[:len(FBX_MAGIC) - len(head)]
+                        if len(head) < sniff:
+                            head += chunk[:sniff - len(head)]
                         part_file.write(chunk)
                         written += len(chunk)
 
             if written == 0:
                 raise TransientError(f"Downloaded an empty file from {url}.")
 
-            if verify_fbx and not head.startswith(FBX_MAGIC):
+            if magic and not head.startswith(magic):
                 # An error page, a login redirect or an archive would
-                # otherwise be saved as a '.fbx' and skipped by resume.
+                # otherwise be saved under the export's name and then skipped
+                # by resume as if it were a finished animation.
                 raise ApiError(
-                    f"{url} did not return a binary FBX "
+                    f"{url} did not return a {self.export_format} export "
                     f"(got {_describe_payload(head)}).")
+
+            if not magic and (head.startswith(b"PK") or head[:1] == b"<"):
+                raise ApiError(
+                    f"{url} returned {_describe_payload(head)}, "
+                    f"not a {self.export_format} export.")
 
             os.replace(part_path, dest_path)
         except BaseException:

@@ -53,6 +53,8 @@ class RecordingEvents(JobEvents):
 class FakeClient:
     """Stand-in for MixamoClient driven by per-animation behaviour."""
 
+    extension = ".fbx"
+
     def __init__(self, behaviour=None, character=("char-1", "Victoria"),
                  search=None, stop=None):
         """Initialize the fake client.

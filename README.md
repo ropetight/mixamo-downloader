@@ -44,22 +44,25 @@ If you don't have Python installed on your computer or you don't want to mess wi
 
 Animations are requested from Mixamo with these preferences, matching the fields in Mixamo's own download dialog:
 
-| Setting | Value |
-|---|---|
-| Format | `FBX Binary(.fbx)` — one file per animation, never a pack or a zip |
-| Skin | Without Skin — animation only, no mesh and no bind pose |
-| Frames per Second | 30 |
-| Keyframe Reduction | none |
+| Setting | Default | Choices |
+|---|---|---|
+| Format | `FBX Binary(.fbx)` | `FBX Binary(.fbx)`, `FBX ASCII(.fbx)`, `FBX for Unity(.fbx)`, `FBX 7.4(.fbx)`, `FBX 6.1(.fbx)`, `Collada(.dae)` |
+| Skin | `Without Skin` | `Without Skin`, `With Skin` |
+| Frames per Second | `30` | `24`, `30`, `60` |
+| Keyframe Reduction | `none` | `none`, `uniform`, `non-uniform` |
+| Pose | `T-pose` | `T-pose`, `Original Pose` — T-Pose download only |
 
-The T-Pose is the one exception: it is exported *with* skin, since that is the only way to get the mesh.
+The labels and the values sent to the API are taken verbatim from the table in Mixamo's own front-end bundle, so every option is one its own client sends. These are also Mixamo's own defaults, with one deliberate exception: it defaults to *With Skin*, this tool to *Without Skin*, since a bulk animation download rarely wants 2346 copies of the mesh.
 
-Every downloaded file is checked for the binary FBX signature before it is kept, so an error page, a login redirect or an unexpected archive is reported instead of being saved under a `.fbx` name and skipped by resume on the next run.
+The T-Pose is the one exception: it is exported *with* skin, since that is the only way to get the mesh, and it is the only download the `Pose` field applies to.
 
-All four are dropdowns in the **Download options** panel, populated from the values Mixamo is known to accept (`PREFERENCE_CHOICES` in `src/mixamo/client.py`) and preselected with the defaults above. There is no free text, so a run cannot be started with a value the API would reject, and anything unrecognised coming from a saved setting falls back to the default before it reaches Mixamo. **Reset** puts the panel back to the defaults.
+The file extension follows the format (`.dae` for Collada), and so does resume: it looks for the extension the selected format produces. Every download is checked against the signature its format should have — `Kaydara FBX Binary` for the binary FBX formats, `; FBX` for ASCII, `<?xml` for Collada — before the file is kept. An error page, a login redirect or an unexpected archive is reported instead of being saved under an export's name and then skipped by resume on the next run.
+
+All of them are dropdowns in the **Download options** panel, populated from the values Mixamo is known to accept (`PREFERENCE_CHOICES` in `src/mixamo/client.py`) and preselected with the defaults above. There is no free text, so a run cannot be started with a value the API would reject, and anything unrecognised coming from a saved setting falls back to the default before it reaches Mixamo. **Reset** puts the panel back to the defaults.
 
 The panel is locked while a download is running -- changing it mid-run would not affect the run -- and the settings actually used are written to the log when the run starts.
 
-Only the defaults are verified against live Mixamo; the alternatives come from its own download dialog. A wrong one cannot corrupt anything: the binary FBX check below rejects whatever comes back.
+Only the defaults have been exercised against live Mixamo. The other values are Mixamo's own, but how a particular rig behaves in, say, FBX 6.1 has not been checked — worth one animation as a trial before a 2346-file batch.
 
 > [!NOTE]
 > Changing the frame rate does not re-download animations you already have — resume skips them by name. Delete the ones you want re-exported, or untick **Resume**.

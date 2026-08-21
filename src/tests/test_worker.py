@@ -148,14 +148,14 @@ class TestWorkerPreferences:
 
         assert worker.preferences == default_preferences()
         assert worker.client.fps == "30"
-        assert worker.client.skin is False
+        assert worker.client.skin == "false"
 
     def test_selected_options_reach_the_client(self):
         worker = MixamoDownloader("/tmp/out", "all", preferences={
-            "fps": "60", "skin": True, "reduce_kf": "1"})
+            "fps": "60", "skin": "true", "reduce_kf": "1"})
 
         assert worker.client.fps == "60"
-        assert worker.client.skin is True
+        assert worker.client.skin == "true"
         assert worker.client.reduce_kf == "1"
 
     def test_a_value_the_api_would_reject_never_leaves_the_worker(self):

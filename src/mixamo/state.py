@@ -164,14 +164,17 @@ class DownloadState:
         self._entry["completed"].pop(anim_id, None)
         self._entry["failed"].pop(anim_id, None)
 
-    def adopt_existing_files(self, animations):
-        """Mark animations whose FBX is already on disk as completed.
+    def adopt_existing_files(self, animations, extension=".fbx"):
+        """Mark animations whose exported file is already on disk as completed.
 
         This is what makes resume work for downloads made before the manifest
         existed, or after someone moved files around by hand.
 
         :param animations: Mapping of animation ID to description
         :type animations: dict
+
+        :param extension: Extension the selected export format produces
+        :type extension: str
 
         :return: Number of animations adopted
         :rtype: int
@@ -185,7 +188,7 @@ class DownloadState:
                 continue
 
             candidate = os.path.join(
-                self.directory, f"{safe_filename(name)}.fbx")
+                self.directory, f"{safe_filename(name)}{extension}")
 
             try:
                 # A zero byte file is a failed download, not a finished one.
@@ -197,7 +200,7 @@ class DownloadState:
 
         return adopted
 
-    def pending(self, animations, resume=True):
+    def pending(self, animations, resume=True, extension=".fbx"):
         """Work out which animations still need downloading.
 
         :param animations: Mapping of animation ID to description
@@ -206,13 +209,16 @@ class DownloadState:
         :param resume: Skip animations already recorded or present on disk
         :type resume: bool
 
+        :param extension: Extension the selected export format produces
+        :type extension: str
+
         :return: (list of (anim_id, name) still to do, number skipped)
         :rtype: tuple
         """
         if not resume:
             return list(animations.items()), 0
 
-        self.adopt_existing_files(animations)
+        self.adopt_existing_files(animations, extension=extension)
 
         todo = [(anim_id, name) for anim_id, name in animations.items()
                 if not self.is_done(anim_id)]

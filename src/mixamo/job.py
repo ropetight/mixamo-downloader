@@ -195,7 +195,8 @@ class DownloadJob:
         url = self.client.export(character_id, payload)
 
         dest = os.path.join(
-            self.output_dir, f"{safe_filename(character_name)}.fbx")
+            self.output_dir,
+            f"{safe_filename(character_name)}{self.client.extension}")
         self.client.download(url, dest)
 
         result.downloaded = 1
@@ -222,7 +223,7 @@ class DownloadJob:
 
         url = self.client.export(character_id, payload)
 
-        filename = f"{safe_filename(description or name)}.fbx"
+        filename = f"{safe_filename(description or name)}{self.client.extension}"
         self.client.download(url, os.path.join(self.output_dir, filename))
 
         return filename
@@ -289,7 +290,8 @@ class DownloadJob:
         if state is None:
             state = DownloadState.load(self.output_dir, character_id)
 
-        todo, skipped = state.pending(animations, resume=self.resume)
+        todo, skipped = state.pending(animations, resume=self.resume,
+                                      extension=self.client.extension)
 
         result.total = len(animations)
         result.skipped = skipped

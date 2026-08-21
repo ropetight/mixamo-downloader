@@ -71,6 +71,7 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         self._build_browser()
         self._build_widgets()
         self._restore_settings()
+        self._sync_preference_fields()
 
         self.status("Log into Mixamo and pick your character to begin.")
 
@@ -135,6 +136,11 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         # Only the query mode needs the keyword field.
         self.rb_query.toggled.connect(self.le_query.setEnabled)
 
+        # Pose only means something for the character (T-Pose) download, and
+        # keyframe reduction and fps only for animations.
+        for button in (self.rb_all, self.rb_query, self.rb_tpose):
+            button.toggled.connect(self._sync_preference_fields)
+
         self.cb_resume = QtWidgets.QCheckBox("Resume (skip files already "
                                              "downloaded)")
         self.cb_resume.setChecked(True)
@@ -166,7 +172,7 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         self.pref_combos = {}
 
         # Fixed order: the same one Mixamo shows.
-        for name in ("export_format", "skin", "fps", "reduce_kf"):
+        for name in ("export_format", "skin", "fps", "reduce_kf", "mesh"):
             label, choices = PREFERENCE_CHOICES[name]
 
             combo = QtWidgets.QComboBox()
@@ -184,9 +190,11 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
             "Animations are exported without a mesh by default. The T-Pose "
             "always carries a skin, whatever this is set to.")
         self.pref_combos["export_format"].setToolTip(
-            "FBX Binary is the verified default. Whatever Mixamo returns is "
-            "checked before it is kept, so a wrong choice is reported rather "
-            "than saved.")
+            "Every format Mixamo offers. The file extension follows the "
+            "format, and whatever comes back is checked against it before it "
+            "is kept.")
+        self.pref_combos["mesh"].setToolTip(
+            "Used by the T-Pose download only; animations ignore it.")
 
         layout.addStretch(1)
 
@@ -197,6 +205,17 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         layout.addWidget(reset)
 
         return box
+
+    def _sync_preference_fields(self):
+        """Enable only the export options the selected mode actually uses."""
+        if not hasattr(self, "pref_combos"):
+            return
+
+        tpose = self.rb_tpose.isChecked()
+
+        self.pref_combos["mesh"].setEnabled(tpose)
+        for name in ("skin", "fps", "reduce_kf"):
+            self.pref_combos[name].setEnabled(not tpose)
 
     def get_preferences(self):
         """Read the export preferences currently selected.

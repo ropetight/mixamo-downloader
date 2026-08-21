@@ -174,3 +174,26 @@ class TestBookkeeping:
 
         assert data["characters"]["char-1"]["completed"] == {
             "id-1": "Walking.fbx"}
+
+
+class TestOtherFormats:
+    """Resume has to look for the extension the chosen format produces."""
+
+    def test_adopts_collada_files_when_collada_is_selected(self, tmp_path):
+        path = os.path.join(str(tmp_path), "Walking.dae")
+        with open(path, "wb") as handle:
+            handle.write(b"<?xml?>")
+
+        state = DownloadState(str(tmp_path), "char-1")
+        todo, skipped = state.pending(ANIMS, extension=".dae")
+
+        assert skipped == 1
+        assert [anim_id for anim_id, _ in todo] == ["id-2", "id-3"]
+
+    def test_an_fbx_does_not_count_as_a_collada(self, tmp_path):
+        write_fbx(tmp_path, "Walking")
+
+        state = DownloadState(str(tmp_path), "char-1")
+        _, skipped = state.pending(ANIMS, extension=".dae")
+
+        assert skipped == 0
