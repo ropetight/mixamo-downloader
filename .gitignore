@@ -1,0 +1,12 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Resume manifests written next to downloaded animations
+.mixamo_downloader.json
+*.fbx.part
+
+# Tooling
+.pytest_cache/
+.blender-toolkit/
+
