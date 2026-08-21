@@ -1,0 +1,3 @@
+# QtWebEngine ships with PySide6's add-ons, which the default wheel pulls in.
+PySide6>=6.5
+requests>=2.28
