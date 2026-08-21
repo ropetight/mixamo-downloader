@@ -34,6 +34,24 @@ class TestSafeFilename:
         assert safe_filename("...") == "animation"
         assert safe_filename("") == "animation"
 
+    def test_escapes_names_windows_reserves_for_devices(self):
+        # 'CON.fbx' cannot be created on Windows, and the failure would
+        # repeat on every retry.
+        assert safe_filename("CON") == "CON_"
+        assert safe_filename("aux") == "aux_"
+        assert safe_filename("Com4") == "Com4_"
+        assert safe_filename("nul.thing") == "nul.thing_"
+
+    def test_leaves_ordinary_names_that_merely_start_the_same(self):
+        assert safe_filename("Console Idle") == "Console Idle"
+        assert safe_filename("Auxiliary") == "Auxiliary"
+
+    def test_drops_trailing_dots_and_spaces_windows_would_silently_strip(self):
+        # Left in place, the same animation would resolve to different names
+        # on Windows and Linux, and resume would redownload it.
+        assert safe_filename("Walking. ") == "Walking"
+        assert safe_filename("Walking ") == "Walking"
+
     def test_truncates_absurdly_long_names(self):
         assert len(safe_filename("x" * 400)) == 150
 

@@ -88,7 +88,20 @@ Animations that failed are recorded with their reason and are retried on the nex
 
 Progress, warnings and errors are shown in the log panel at the bottom of the window and, where the desktop supports it, as a notification when the run ends.
 
-Closing the window ends the process. A running download is stopped first (after asking), the tray icon and the embedded browser are released explicitly -- either one will otherwise keep Qt's event loop alive with the window gone -- and the last of QtWebEngine's helper threads is not waited on, so the shell prompt always comes back. `Ctrl+C` in the terminal works too.
+Closing the window ends the process. A running download is stopped first (after asking), then the tray icon and the embedded browser are released explicitly -- either one will otherwise keep Qt's event loop alive with the window gone -- and the application object is dropped so Qt runs its own shutdown.
+
+That is the graceful path, and it is the one that runs: the interpreter exits normally, `atexit` handlers run, and a frozen build cleans up its unpacked temporary folder. A watchdog on a daemon thread only steps in if shutdown has not finished after 10 seconds, which is the case where QtWebEngine has left a thread behind and the process would otherwise never return the shell prompt. It says so on stderr when it fires.
+
+`Ctrl+C` in the terminal works too: the default SIGINT handler is restored, on Windows as well, so the key is not swallowed by the event loop.
+
+## Platform notes
+
+Nothing in the tool is tied to Linux:
+
+- Downloaded file names avoid every character Windows rejects, the device names it reserves (`CON`, `NUL`, `COM1`...), and trailing dots and spaces it silently strips -- which would otherwise give the same animation two different names across platforms and confuse resume.
+- Files are written through a temporary `.part` and an atomic replace, and the resume manifest the same way, both of which behave on NTFS as they do elsewhere.
+- Shipped files (the animation list, the icon) are found through `sys._MEIPASS` and the executable's own folder before the source tree, so PyInstaller one-file and one-folder builds work without a code change.
+- The output folder is opened through `QDesktopServices`, so it uses Explorer, Finder or the desktop's file manager as appropriate.
 
 ## Layout
 

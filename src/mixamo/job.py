@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from .client import safe_filename
 from .errors import (AuthError, ExportFailed, ExportTimeout, MixamoError,
                      RateLimited, Stopped, TokenUnavailable, TransientError)
+from .resources import resource_path
 from .state import DownloadState
 
 
@@ -22,8 +23,7 @@ from .state import DownloadState
 RETRYABLE = (TransientError, RateLimited, ExportFailed, ExportTimeout)
 
 # Default path of the pre-scraped animation list shipped with the tool.
-ANIMS_FILE = os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "mixamo_anims.json")
+ANIMS_FILE = resource_path("mixamo_anims.json")
 
 # Give up on the whole run after this many failures in a row: at that point
 # something is wrong with the account or the service, not with one animation.

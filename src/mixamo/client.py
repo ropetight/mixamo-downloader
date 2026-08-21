@@ -151,6 +151,13 @@ def valid_preferences(preferences):
 # Characters Windows and Linux disagree about; strip them from file names.
 ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# Names Windows refuses to give a file, whatever the extension. Mixamo is
+# unlikely to produce one, but a rejected name would fail every retry.
+RESERVED_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{digit}" for digit in range(1, 10)]
+    + [f"LPT{digit}" for digit in range(1, 10)])
+
 
 def safe_filename(name, fallback="animation"):
     """Turn an animation description into a file name usable on any OS.
@@ -167,8 +174,18 @@ def safe_filename(name, fallback="animation"):
     cleaned = ILLEGAL_CHARS.sub("_", str(name or ""))
     # Collapse the runs of underscores a messy description can produce, and
     # trim the leading/trailing noise a stripped character leaves behind.
-    cleaned = re.sub(r"_{2,}", "_", cleaned).strip(" ._")
-    return cleaned[:150].strip(" ._") or fallback
+    # A trailing dot or space is legal on Linux and silently dropped by
+    # Windows, which would break resume across platforms.
+    cleaned = re.sub(r"_{2,}", "_", cleaned).strip(" ._")[:150].strip(" ._")
+
+    if not cleaned:
+        return fallback
+
+    # Windows treats 'NUL.fbx' as the device too, so test the stem.
+    if cleaned.split(".")[0].upper() in RESERVED_NAMES:
+        return f"{cleaned}_"
+
+    return cleaned
 
 
 def _describe_payload(head):

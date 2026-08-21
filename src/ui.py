@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtGui, QtWebEngineWidgets, QtWidgets
 # Local modules
 from downloader import MixamoDownloader
 from mixamo.client import PREFERENCE_CHOICES, default_preferences
+from mixamo.resources import resource_path
 from webpage import CustomWebPage
 
 
@@ -52,8 +53,7 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         self.setWindowTitle("Mixamo Downloader")
         self.setGeometry(100, 100, 1200, 900)
 
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 "mixamo.ico")
+        icon_path = resource_path("mixamo.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QtGui.QIcon(icon_path))
 
