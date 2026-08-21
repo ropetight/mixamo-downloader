@@ -13,6 +13,7 @@ import pytest
 # Local modules
 import downloader as downloader_module
 from downloader import MixamoDownloader
+from mixamo.client import default_preferences
 from mixamo.errors import TokenUnavailable
 from mixamo.job import JobResult
 from webpage import TOKEN_MARKER, extract_token
@@ -137,3 +138,30 @@ class TestWorker:
         assert totals == [7]
         assert steps == [3]
         assert items == ["Walking"]
+
+
+class TestWorkerPreferences:
+    """The worker is the only thing standing between the UI and the API."""
+
+    def test_defaults_when_the_ui_passes_nothing(self):
+        worker = MixamoDownloader("/tmp/out", "all")
+
+        assert worker.preferences == default_preferences()
+        assert worker.client.fps == "30"
+        assert worker.client.skin is False
+
+    def test_selected_options_reach_the_client(self):
+        worker = MixamoDownloader("/tmp/out", "all", preferences={
+            "fps": "60", "skin": True, "reduce_kf": "1"})
+
+        assert worker.client.fps == "60"
+        assert worker.client.skin is True
+        assert worker.client.reduce_kf == "1"
+
+    def test_a_value_the_api_would_reject_never_leaves_the_worker(self):
+        worker = MixamoDownloader("/tmp/out", "all", preferences={
+            "fps": "13", "export_format": "not-a-format", "junk": 1})
+
+        assert worker.client.fps == "30"
+        assert worker.client.export_format == "fbx7_2019"
+        assert not hasattr(worker.client, "junk")

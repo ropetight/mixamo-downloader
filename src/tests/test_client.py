@@ -10,7 +10,9 @@ import pytest
 # Local modules
 from conftest import (FakeResponse, fbx_bytes, network_error,
                       queue_handler, route_handler)
-from mixamo.client import API, MixamoClient, safe_filename
+from mixamo.client import (API, PREFERENCE_CHOICES, MixamoClient,
+                           default_preferences, safe_filename,
+                           valid_preferences)
 from mixamo.errors import (ApiError, AuthError, ExportFailed, ExportTimeout,
                            RateLimited, Stopped, TransientError)
 from mixamo.tokens import TokenProvider
@@ -468,3 +470,64 @@ class TestDownload:
         client.download("https://cdn/f.fbx", str(tmp_path / "a.fbx"))
 
         assert response.closed
+
+
+class TestPreferenceChoices:
+    """The UI builds its dropdowns from these, so they have to be sound."""
+
+    def test_every_preference_names_a_client_attribute(self, make_client):
+        client, _ = make_client(queue_handler([]))
+
+        for name in PREFERENCE_CHOICES:
+            assert hasattr(client, name)
+
+    def test_the_first_choice_of_each_is_the_default(self):
+        client_defaults = {
+            "export_format": "fbx7_2019",
+            "skin": False,
+            "fps": "30",
+            "reduce_kf": "0",
+        }
+
+        assert default_preferences() == client_defaults
+
+    def test_labels_and_values_are_unique_within_a_preference(self):
+        for _, choices in PREFERENCE_CHOICES.values():
+            labels = [label for label, _ in choices]
+            values = [value for _, value in choices]
+
+            assert len(set(labels)) == len(labels)
+            assert len(set(values)) == len(values)
+
+    def test_defaults_are_accepted_unchanged(self):
+        assert valid_preferences(default_preferences()) == default_preferences()
+
+    def test_a_selectable_value_is_kept(self):
+        assert valid_preferences({"fps": "60"})["fps"] == "60"
+
+    def test_an_unknown_value_falls_back_to_the_default(self):
+        # A hand-edited config or a setting left over from an older version
+        # must not reach Mixamo.
+        assert valid_preferences({"fps": "999"})["fps"] == "30"
+
+    def test_an_unknown_preference_is_dropped(self):
+        assert "bogus" not in valid_preferences({"bogus": "x"})
+
+    def test_nothing_selected_gives_the_defaults(self):
+        assert valid_preferences(None) == default_preferences()
+
+    def test_the_chosen_preferences_reach_the_payload(self, make_client):
+        client, _ = make_client(queue_handler([FakeResponse(200, json_data={
+            "description": "Walking",
+            "type": "Motion",
+            "details": {"gms_hash": {"params": [], "trim": [0, 100]}},
+        })]), **valid_preferences({"fps": "24", "skin": True,
+                                   "reduce_kf": "2"}))
+
+        import json as _json
+        preferences = _json.loads(
+            client.animation_payload("char-1", "anim-1")[0])["preferences"]
+
+        assert preferences["fps"] == "24"
+        assert preferences["skin"] is True
+        assert preferences["reducekf"] == "2"

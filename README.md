@@ -29,12 +29,13 @@ If you don't have Python installed on your computer or you don't want to mess wi
 1. Log into your Mixamo account in the embedded browser.
 2. Select/upload the character you want to animate.
 3. Choose between downloading `All animations`, `Animations containing the word` and the `T-Pose (with skin)`.
-4. You can optionally set an output folder where all animations will be saved.
+4. Check the `Download options` panel: format, skin, frame rate and keyframe reduction, the same fields Mixamo's own download dialog offers.
+5. You can optionally set an output folder where all animations will be saved.
 
    > If no output folder is set, FBX files will be downloaded to the folder where the program is running.
 
-5. Press the `Start download` button and wait until it's done.
-6. You can cancel the process at any time by pressing the `Stop` button.
+6. Press the `Start download` button and wait until it's done.
+7. You can cancel the process at any time by pressing the `Stop` button.
 
 > [!IMPORTANT]
 > Downloading all animations can be quite slow. We're dealing with a total of 2346 animations, so don't expect it to be lighting fast.
@@ -54,7 +55,11 @@ The T-Pose is the one exception: it is exported *with* skin, since that is the o
 
 Every downloaded file is checked for the binary FBX signature before it is kept, so an error page, a login redirect or an unexpected archive is reported instead of being saved under a `.fbx` name and skipped by resume on the next run.
 
-The defaults live in `src/mixamo/client.py` (`DEFAULT_FORMAT`, `DEFAULT_FPS`, `DEFAULT_REDUCE_KF`) and can be overridden per client; Mixamo accepts `24`, `30` and `60` for the frame rate.
+All four are dropdowns in the **Download options** panel, populated from the values Mixamo is known to accept (`PREFERENCE_CHOICES` in `src/mixamo/client.py`) and preselected with the defaults above. There is no free text, so a run cannot be started with a value the API would reject, and anything unrecognised coming from a saved setting falls back to the default before it reaches Mixamo. **Reset** puts the panel back to the defaults.
+
+The panel is locked while a download is running -- changing it mid-run would not affect the run -- and the settings actually used are written to the log when the run starts.
+
+Only the defaults are verified against live Mixamo; the alternatives come from its own download dialog. A wrong one cannot corrupt anything: the binary FBX check below rejects whatever comes back.
 
 > [!NOTE]
 > Changing the frame rate does not re-download animations you already have — resume skips them by name. Delete the ones you want re-exported, or untick **Resume**.

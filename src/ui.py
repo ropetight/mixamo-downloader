@@ -10,6 +10,7 @@ from PySide6 import QtCore, QtGui, QtWebEngineWidgets, QtWidgets
 
 # Local modules
 from downloader import MixamoDownloader
+from mixamo.client import PREFERENCE_CHOICES, default_preferences
 from webpage import CustomWebPage
 
 
@@ -98,6 +99,7 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
 
         layout.addWidget(self.browser, stretch=1)
         layout.addWidget(self._build_options())
+        layout.addWidget(self._build_export_options())
         layout.addWidget(self._build_output())
         layout.addLayout(self._build_actions())
         layout.addWidget(self._build_progress())
@@ -148,6 +150,86 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         layout.addWidget(self.cb_resume)
 
         return box
+
+    def _build_export_options(self):
+        """Build the export options panel, mirroring Mixamo's own dialog.
+
+        Every field is a dropdown built from the values the API is known to
+        accept, so a download cannot be started with a preference Mixamo
+        would reject.
+
+        :rtype: QtWidgets.QWidget
+        """
+        self.export_box = box = QtWidgets.QGroupBox("Download options")
+        layout = QtWidgets.QHBoxLayout(box)
+
+        self.pref_combos = {}
+
+        # Fixed order: the same one Mixamo shows.
+        for name in ("export_format", "skin", "fps", "reduce_kf"):
+            label, choices = PREFERENCE_CHOICES[name]
+
+            combo = QtWidgets.QComboBox()
+            for text, value in choices:
+                combo.addItem(text, value)
+            combo.setCurrentIndex(0)
+
+            self.pref_combos[name] = combo
+
+            layout.addWidget(QtWidgets.QLabel(f"{label}:"))
+            layout.addWidget(combo)
+            layout.addSpacing(12)
+
+        self.pref_combos["skin"].setToolTip(
+            "Animations are exported without a mesh by default. The T-Pose "
+            "always carries a skin, whatever this is set to.")
+        self.pref_combos["export_format"].setToolTip(
+            "FBX Binary is the verified default. Whatever Mixamo returns is "
+            "checked before it is kept, so a wrong choice is reported rather "
+            "than saved.")
+
+        layout.addStretch(1)
+
+        reset = QtWidgets.QPushButton("Reset")
+        reset.setToolTip("Back to FBX Binary, Without Skin, 30fps, no "
+                         "keyframe reduction.")
+        reset.clicked.connect(self.reset_preferences)
+        layout.addWidget(reset)
+
+        return box
+
+    def get_preferences(self):
+        """Read the export preferences currently selected.
+
+        :return: Mapping of client attribute name to value
+        :rtype: dict
+        """
+        return {name: combo.currentData()
+                for name, combo in self.pref_combos.items()}
+
+    def set_preferences(self, preferences):
+        """Select the given export preferences in the dropdowns.
+
+        Values the dropdowns do not offer are ignored, so a stale setting
+        from an older version cannot preselect something invalid.
+
+        :param preferences: Mapping of client attribute name to value
+        :type preferences: dict
+        """
+        for name, value in (preferences or {}).items():
+            combo = self.pref_combos.get(name)
+            if combo is None:
+                continue
+
+            index = combo.findData(value)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+
+    @QtCore.Slot()
+    def reset_preferences(self):
+        """Put every export option back to its default."""
+        self.set_preferences(default_preferences())
+        self.log("info", "Download options reset to their defaults.")
 
     def _build_output(self):
         """Build the output folder picker.
@@ -261,12 +343,22 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         {"query": self.rb_query, "tpose": self.rb_tpose}.get(
             mode, self.rb_all).setChecked(True)
 
+        # Preferences are stored by their position in the dropdown, so a
+        # renamed value in a later version cannot restore something invalid.
+        for name, combo in self.pref_combos.items():
+            index = self.settings.value(f"pref_{name}", 0, int)
+            if 0 <= index < combo.count():
+                combo.setCurrentIndex(index)
+
     def _store_settings(self):
         """Remember the current options for the next session."""
         self.settings.setValue("output_path", self.le_path.text())
         self.settings.setValue("query", self.le_query.text())
         self.settings.setValue("resume", self.cb_resume.isChecked())
         self.settings.setValue("mode", self.get_mode())
+
+        for name, combo in self.pref_combos.items():
+            self.settings.setValue(f"pref_{name}", combo.currentIndex())
 
     # ------------------------------------------------------------------
     # Logging and notifications
@@ -472,7 +564,8 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
             self.get_mode(),
             query=self.le_query.text().strip(),
             resume=self.cb_resume.isChecked(),
-            token=token)
+            token=token,
+            preferences=self.get_preferences())
 
         self.worker.moveToThread(self.thread)
 
@@ -493,9 +586,15 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.finished.connect(self.on_thread_finished)
 
+        self.log("info", "Export settings -- " + ", ".join(
+            f"{PREFERENCE_CHOICES[name][0]}: {combo.currentText()}"
+            for name, combo in self.pref_combos.items()))
+
         self.progress_bar.setRange(0, 0)
         self.stop_btn.setEnabled(True)
         self.get_btn.setEnabled(False)
+        # Changing a dropdown mid-run would not affect the run, so lock them.
+        self.export_box.setEnabled(False)
 
         self.thread.start()
 
@@ -553,6 +652,7 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
         """Put the buttons and progress bar back to their idle state."""
         self.get_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.export_box.setEnabled(True)
         self.progress_bar.setRange(0, 1)
         self.lbl_item.setText("Idle.")
 

@@ -44,8 +44,79 @@ RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 # REDUCE_KF   "Keyframe Reduction". "0" is none, which keeps every key Mixamo
 #             baked; anything else drops keys and softens the motion.
 DEFAULT_FORMAT = "fbx7_2019"
+DEFAULT_SKIN = False
 DEFAULT_FPS = "30"
 DEFAULT_REDUCE_KF = "0"
+
+# The values each preference accepts, as (label shown to the user, value sent
+# to Mixamo). The UI builds its dropdowns from these, so it cannot offer a
+# value the API would reject -- and the first entry of each is the default.
+#
+# Only the defaults are verified against live Mixamo; the alternatives come
+# from its download dialog. A wrong value cannot corrupt a download: the
+# binary FBX check in `download` rejects whatever comes back instead.
+FORMAT_CHOICES = (
+    ("FBX Binary(.fbx)", "fbx7_2019"),
+    ("FBX for Unity(.fbx)", "fbx7unity"),
+)
+
+SKIN_CHOICES = (
+    ("Without Skin", False),
+    ("With Skin", True),
+)
+
+FPS_CHOICES = (
+    ("30", "30"),
+    ("24", "24"),
+    ("60", "60"),
+)
+
+REDUCE_KF_CHOICES = (
+    ("none", "0"),
+    ("uniform", "1"),
+    ("non-uniform", "2"),
+)
+
+# Every preference the UI can set, keyed by the client attribute it drives.
+PREFERENCE_CHOICES = {
+    "export_format": ("Format", FORMAT_CHOICES),
+    "skin": ("Skin", SKIN_CHOICES),
+    "fps": ("Frames per Second", FPS_CHOICES),
+    "reduce_kf": ("Keyframe Reduction", REDUCE_KF_CHOICES),
+}
+
+
+def default_preferences():
+    """Build the export preferences a fresh download starts with.
+
+    :return: Mapping of client attribute name to value
+    :rtype: dict
+    """
+    return {name: choices[0][1]
+            for name, (_, choices) in PREFERENCE_CHOICES.items()}
+
+
+def valid_preferences(preferences):
+    """Keep only the preferences whose value the API is known to accept.
+
+    Anything unrecognised -- a stale setting from an older version, a hand
+    edited config -- falls back to the default rather than being sent on.
+
+    :param preferences: Candidate preferences
+    :type preferences: dict
+
+    :return: Preferences safe to hand to :class:`MixamoClient`
+    :rtype: dict
+    """
+    checked = default_preferences()
+
+    for name, value in (preferences or {}).items():
+        allowed = PREFERENCE_CHOICES.get(name)
+        if allowed and value in [choice[1] for choice in allowed[1]]:
+            checked[name] = value
+
+    return checked
+
 
 # First bytes of a Kaydara binary FBX. Anything else coming back on a download
 # link is an error page or an unexpected archive, not an animation.
@@ -99,8 +170,8 @@ class MixamoClient:
     def __init__(self, tokens, session=None, stop=None, timeout=(10, 60),
                  max_retries=4, backoff=1.5, sleep=None,
                  poll_interval=1.0, export_timeout=300.0, clock=time.monotonic,
-                 export_format=DEFAULT_FORMAT, fps=DEFAULT_FPS,
-                 reduce_kf=DEFAULT_REDUCE_KF):
+                 export_format=DEFAULT_FORMAT, skin=DEFAULT_SKIN,
+                 fps=DEFAULT_FPS, reduce_kf=DEFAULT_REDUCE_KF):
         """Initialize the client.
 
         :param tokens: Provider handing out (and refreshing) bearer tokens
@@ -134,6 +205,9 @@ class MixamoClient:
             binary FBX one animation per file
         :type export_format: str
 
+        :param skin: Whether animations carry the character mesh
+        :type skin: bool
+
         :param fps: Frames per second baked into the export ("24"/"30"/"60")
         :type fps: str
 
@@ -153,6 +227,7 @@ class MixamoClient:
         self.export_timeout = export_timeout
         self.clock = clock
         self.export_format = export_format
+        self.skin = skin
         self.fps = fps
         self.reduce_kf = reduce_kf
         self._sleep = sleep or self._interruptible_sleep
@@ -406,9 +481,9 @@ class MixamoClient:
             "type": product_type,
             "preferences": {
                 "format": self.export_format,
-                # Animations carry no mesh and no bind pose: only the T-Pose
-                # export asks Mixamo for a skin.
-                "skin": False,
+                # Off by default: animations then carry no mesh and no bind
+                # pose. The T-Pose export asks for a skin regardless.
+                "skin": self.skin,
                 "fps": self.fps if fps is None else fps,
                 "reducekf": self.reduce_kf if reducekf is None else reducekf,
             },

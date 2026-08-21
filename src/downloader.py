@@ -12,7 +12,7 @@ import threading
 from PySide6 import QtCore
 
 # Local modules
-from mixamo.client import MixamoClient
+from mixamo.client import MixamoClient, valid_preferences
 from mixamo.job import DownloadJob, JobEvents
 from mixamo.tokens import TokenProvider
 
@@ -70,7 +70,7 @@ class MixamoDownloader(QtCore.QObject):
     token_needed = QtCore.Signal()
 
     def __init__(self, path, mode, query=None, resume=True, token=None,
-                 parent=None):
+                 preferences=None, parent=None):
         """Initialize the downloader.
 
         :param path: Output folder path
@@ -87,6 +87,10 @@ class MixamoDownloader(QtCore.QObject):
 
         :param token: Access token already scraped from the browser
         :type token: str or None
+
+        :param preferences: Export preferences picked in the UI; unknown
+            values fall back to the defaults rather than reaching Mixamo
+        :type preferences: dict or None
         """
         super().__init__(parent)
 
@@ -106,7 +110,10 @@ class MixamoDownloader(QtCore.QObject):
         if token:
             self.tokens.set(token)
 
-        self.client = MixamoClient(self.tokens, stop=self.stop_event)
+        self.preferences = valid_preferences(preferences)
+
+        self.client = MixamoClient(self.tokens, stop=self.stop_event,
+                                   **self.preferences)
         self.result = None
 
     @QtCore.Slot(str)
