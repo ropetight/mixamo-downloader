@@ -34,6 +34,23 @@ BASE_HEADERS = {
 # Status codes worth trying again: throttling, gateway hiccups, timeouts.
 RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
+# Export preferences, named after the fields in Mixamo's own download dialog.
+#
+# FORMAT      "FBX Binary(.fbx)". Mixamo answers with a single Kaydara binary
+#             FBX per animation -- never a pack, never a zip.
+# SKIN        "Without Skin": animation only, no mesh, no bind pose. Only the
+#             T-Pose export carries a skin, and it asks for one explicitly.
+# FPS         "Frames per Second". Mixamo accepts "24", "30" and "60".
+# REDUCE_KF   "Keyframe Reduction". "0" is none, which keeps every key Mixamo
+#             baked; anything else drops keys and softens the motion.
+DEFAULT_FORMAT = "fbx7_2019"
+DEFAULT_FPS = "30"
+DEFAULT_REDUCE_KF = "0"
+
+# First bytes of a Kaydara binary FBX. Anything else coming back on a download
+# link is an error page or an unexpected archive, not an animation.
+FBX_MAGIC = b"Kaydara FBX Binary"
+
 # Characters Windows and Linux disagree about; strip them from file names.
 ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -57,12 +74,33 @@ def safe_filename(name, fallback="animation"):
     return cleaned[:150].strip(" ._") or fallback
 
 
+def _describe_payload(head):
+    """Name what came back on a download link, for the error message.
+
+    :param head: First bytes of the response body
+    :type head: bytes
+
+    :return: Short human readable description
+    :rtype: str
+    """
+    if head.startswith(b"PK"):
+        return "a zip archive"
+    if head[:1] == b"<":
+        return "an HTML page"
+    if not head:
+        return "nothing"
+
+    return repr(head[:16])
+
+
 class MixamoClient:
     """Talks to the Mixamo API on behalf of the downloader."""
 
     def __init__(self, tokens, session=None, stop=None, timeout=(10, 60),
                  max_retries=4, backoff=1.5, sleep=None,
-                 poll_interval=1.0, export_timeout=300.0, clock=time.monotonic):
+                 poll_interval=1.0, export_timeout=300.0, clock=time.monotonic,
+                 export_format=DEFAULT_FORMAT, fps=DEFAULT_FPS,
+                 reduce_kf=DEFAULT_REDUCE_KF):
         """Initialize the client.
 
         :param tokens: Provider handing out (and refreshing) bearer tokens
@@ -92,6 +130,16 @@ class MixamoClient:
         :param export_timeout: How long an export may take before we give up
         :type export_timeout: float
 
+        :param export_format: Mixamo download format; the default is the
+            binary FBX one animation per file
+        :type export_format: str
+
+        :param fps: Frames per second baked into the export ("24"/"30"/"60")
+        :type fps: str
+
+        :param reduce_kf: Keyframe reduction, "0" for none
+        :type reduce_kf: str
+
         :param clock: Monotonic time source
         :type clock: callable
         """
@@ -104,6 +152,9 @@ class MixamoClient:
         self.poll_interval = poll_interval
         self.export_timeout = export_timeout
         self.clock = clock
+        self.export_format = export_format
+        self.fps = fps
+        self.reduce_kf = reduce_kf
         self._sleep = sleep or self._interruptible_sleep
 
     # ------------------------------------------------------------------
@@ -312,7 +363,8 @@ class MixamoClient:
 
         return animations
 
-    def animation_payload(self, character_id, anim_id, fps="24", reducekf="0"):
+    def animation_payload(self, character_id, anim_id, fps=None,
+                          reducekf=None):
         """Build the export payload for one animation on one character.
 
         :param character_id: Primary character ID
@@ -320,6 +372,12 @@ class MixamoClient:
 
         :param anim_id: Animation ID
         :type anim_id: str
+
+        :param fps: Frames per second; defaults to the client's setting
+        :type fps: str or None
+
+        :param reducekf: Keyframe reduction; defaults to the client's setting
+        :type reducekf: str or None
 
         :return: (payload JSON string, animation description)
         :rtype: tuple
@@ -347,10 +405,12 @@ class MixamoClient:
             "product_name": description,
             "type": product_type,
             "preferences": {
-                "format": "fbx7_2019",
+                "format": self.export_format,
+                # Animations carry no mesh and no bind pose: only the T-Pose
+                # export asks Mixamo for a skin.
                 "skin": False,
-                "fps": fps,
-                "reducekf": reducekf,
+                "fps": self.fps if fps is None else fps,
+                "reducekf": self.reduce_kf if reducekf is None else reducekf,
             },
             "gms_hash": [gms_hash],
         }
@@ -373,7 +433,7 @@ class MixamoClient:
             "character_id": character_id,
             "product_name": character_name,
             "type": "Character",
-            "preferences": {"format": "fbx7_2019", "mesh": "t-pose"},
+            "preferences": {"format": self.export_format, "mesh": "t-pose"},
             "gms_hash": None,
         }
 
@@ -424,7 +484,7 @@ class MixamoClient:
 
             self._sleep(self.poll_interval)
 
-    def download(self, url, dest_path, chunk_size=65536):
+    def download(self, url, dest_path, chunk_size=65536, verify_fbx=True):
         """Stream an exported FBX to disk.
 
         The file is written to a temporary '.part' file and only renamed once
@@ -437,10 +497,14 @@ class MixamoClient:
         :param dest_path: Final path of the FBX on disk
         :type dest_path: str
 
+        :param verify_fbx: Reject anything that is not a binary FBX
+        :type verify_fbx: bool
+
         :return: Number of bytes written
         :rtype: int
 
         :raises Stopped: The user pressed Stop mid-download
+        :raises ApiError: The link served something other than a binary FBX
         """
         response = self.request("GET", url, stream=True, authenticated=False)
 
@@ -450,6 +514,7 @@ class MixamoClient:
 
         part_path = f"{dest_path}.part"
         written = 0
+        head = b""
 
         try:
             with open(part_path, "wb") as part_file:
@@ -458,11 +523,20 @@ class MixamoClient:
                     # download instead of waiting for the whole file.
                     self._check_stop()
                     if chunk:
+                        if len(head) < len(FBX_MAGIC):
+                            head += chunk[:len(FBX_MAGIC) - len(head)]
                         part_file.write(chunk)
                         written += len(chunk)
 
             if written == 0:
                 raise TransientError(f"Downloaded an empty file from {url}.")
+
+            if verify_fbx and not head.startswith(FBX_MAGIC):
+                # An error page, a login redirect or an archive would
+                # otherwise be saved as a '.fbx' and skipped by resume.
+                raise ApiError(
+                    f"{url} did not return a binary FBX "
+                    f"(got {_describe_payload(head)}).")
 
             os.replace(part_path, dest_path)
         except BaseException:

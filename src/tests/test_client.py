@@ -8,8 +8,8 @@ import threading
 import pytest
 
 # Local modules
-from conftest import (FakeResponse, network_error, queue_handler,
-                      route_handler)
+from conftest import (FakeResponse, fbx_bytes, network_error,
+                      queue_handler, route_handler)
 from mixamo.client import API, MixamoClient, safe_filename
 from mixamo.errors import (ApiError, AuthError, ExportFailed, ExportTimeout,
                            RateLimited, Stopped, TransientError)
@@ -184,7 +184,7 @@ class TestAuthentication:
         # The export link is a pre-signed URL; sending Adobe's bearer token to
         # it is unnecessary and can break the download.
         client, session = make_client(
-            queue_handler([FakeResponse(200, content=b"fbx")]))
+            queue_handler([FakeResponse(200, content=fbx_bytes())]))
 
         client.download("https://cdn.example/file.fbx",
                         os.path.join(os.getcwd(), "unused"))
@@ -270,7 +270,39 @@ class TestPayloads:
         assert data["gms_hash"][0]["params"] == "1,0"
         assert data["gms_hash"][0]["trim"] == [0, 100]
         assert data["gms_hash"][0]["overdrive"] == 0
-        assert data["preferences"]["format"] == "fbx7_2019"
+
+    def test_asks_for_binary_fbx_without_skin_at_30fps_and_no_reduction(
+            self, make_client):
+        client, _ = make_client(queue_handler([FakeResponse(200, json_data={
+            "description": "Walking",
+            "type": "Motion",
+            "details": {"gms_hash": {"params": [], "trim": [0, 100]}},
+        })]))
+
+        import json as _json
+        preferences = _json.loads(
+            client.animation_payload("char-1", "anim-1")[0])["preferences"]
+
+        assert preferences == {
+            "format": "fbx7_2019",   # FBX Binary, one file per animation
+            "skin": False,           # no mesh, no bind pose
+            "fps": "30",
+            "reducekf": "0",         # keyframe reduction: none
+        }
+
+    def test_export_preferences_can_be_overridden(self, make_client):
+        client, _ = make_client(queue_handler([FakeResponse(200, json_data={
+            "description": "Walking",
+            "type": "Motion",
+            "details": {"gms_hash": {"params": [], "trim": [0, 100]}},
+        })]), fps="60", reduce_kf="1")
+
+        import json as _json
+        preferences = _json.loads(
+            client.animation_payload("char-1", "anim-1")[0])["preferences"]
+
+        assert preferences["fps"] == "60"
+        assert preferences["reducekf"] == "1"
 
     def test_builds_a_tpose_payload_with_a_skin(self, make_client):
         client, _ = make_client(queue_handler([]))
@@ -349,17 +381,17 @@ class TestDownload:
 
     def test_writes_the_file(self, make_client, tmp_path):
         client, _ = make_client(
-            queue_handler([FakeResponse(200, content=b"FBX-DATA")]))
+            queue_handler([FakeResponse(200, content=fbx_bytes(b"DATA"))]))
 
         dest = tmp_path / "Walking.fbx"
         written = client.download("https://cdn/f.fbx", str(dest))
 
-        assert written == 8
-        assert dest.read_bytes() == b"FBX-DATA"
+        assert written == len(fbx_bytes(b"DATA"))
+        assert dest.read_bytes() == fbx_bytes(b"DATA")
 
     def test_creates_the_output_folder(self, make_client, tmp_path):
         client, _ = make_client(
-            queue_handler([FakeResponse(200, content=b"FBX")]))
+            queue_handler([FakeResponse(200, content=fbx_bytes())]))
 
         dest = tmp_path / "nested" / "deeper" / "Walking.fbx"
         client.download("https://cdn/f.fbx", str(dest))
@@ -383,6 +415,40 @@ class TestDownload:
         assert not dest.exists()
         assert list(tmp_path.iterdir()) == []
 
+    def test_rejects_a_zip_instead_of_an_fbx(self, make_client, tmp_path):
+        # A pack would arrive as a zip; the export preferences ask for one
+        # binary FBX per animation, so a zip means something went wrong.
+        client, _ = make_client(queue_handler([
+            FakeResponse(200, content=b"PK\x03\x04rest-of-the-archive")]))
+
+        dest = tmp_path / "Walking.fbx"
+
+        with pytest.raises(ApiError, match="zip archive"):
+            client.download("https://cdn/f.fbx", str(dest))
+
+        assert not dest.exists()
+
+    def test_rejects_an_html_error_page(self, make_client, tmp_path):
+        client, _ = make_client(queue_handler([
+            FakeResponse(200, content=b"<!DOCTYPE html><title>Oops</title>")]))
+
+        dest = tmp_path / "Walking.fbx"
+
+        with pytest.raises(ApiError, match="HTML page"):
+            client.download("https://cdn/f.fbx", str(dest))
+
+        assert not dest.exists()
+
+    def test_detects_the_magic_even_when_it_spans_chunks(self, make_client,
+                                                         tmp_path):
+        client, _ = make_client(queue_handler([FakeResponse(
+            200, chunks=[b"Kaydara ", b"FBX Binary  ", b"payload"])]))
+
+        dest = tmp_path / "Walking.fbx"
+        client.download("https://cdn/f.fbx", str(dest))
+
+        assert dest.exists()
+
     def test_rejects_an_empty_download(self, make_client, tmp_path):
         client, _ = make_client(
             queue_handler([FakeResponse(200, content=b"")]))
@@ -396,7 +462,7 @@ class TestDownload:
         assert not dest.exists()
 
     def test_closes_the_response(self, make_client, tmp_path):
-        response = FakeResponse(200, content=b"FBX")
+        response = FakeResponse(200, content=fbx_bytes())
         client, _ = make_client(queue_handler([response]))
 
         client.download("https://cdn/f.fbx", str(tmp_path / "a.fbx"))

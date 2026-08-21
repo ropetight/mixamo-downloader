@@ -12,7 +12,7 @@ import threading
 import pytest
 
 # Local modules
-from conftest import FakeResponse, FakeSession, InstantSleep
+from conftest import FakeResponse, FakeSession, InstantSleep, fbx_bytes
 from mixamo.client import MixamoClient
 from mixamo.job import DownloadJob, JobEvents
 from mixamo.state import DownloadState
@@ -79,7 +79,7 @@ class MixamoStub:
                 "job_result": "https://cdn.example/file.fbx"})
 
         if "cdn.example" in url:
-            return FakeResponse(200, content=b"FBX-CONTENT")
+            return FakeResponse(200, content=fbx_bytes(b"CONTENT"))
 
         raise AssertionError(f"Unexpected request: {method} {url}")
 
@@ -123,7 +123,7 @@ class TestEndToEnd:
 
         assert result.ok
         assert result.downloaded == 2
-        assert (tmp_path / "out" / "Walking.fbx").read_bytes() == b"FBX-CONTENT"
+        assert (tmp_path / "out" / "Walking.fbx").read_bytes() == fbx_bytes(b"CONTENT")
         assert (tmp_path / "out" / "Zombie Idle.fbx").exists()
 
         state = DownloadState.load(str(tmp_path / "out"), "char-1")

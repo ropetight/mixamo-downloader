@@ -23,6 +23,22 @@ from mixamo.client import MixamoClient  # noqa: E402
 from mixamo.tokens import TokenProvider  # noqa: E402
 
 
+# A believable binary FBX body: the client checks this magic before it keeps
+# a downloaded file, so fixtures have to look like the real thing.
+FBX_HEADER = b"Kaydara FBX Binary  \x00\x1a\x00"
+
+
+def fbx_bytes(payload=b"animation-data"):
+    """Build a body the client will accept as a binary FBX.
+
+    :param payload: Bytes appended after the header
+    :type payload: bytes
+
+    :rtype: bytes
+    """
+    return FBX_HEADER + payload
+
+
 class FakeResponse:
     """Stand-in for a requests.Response."""
 

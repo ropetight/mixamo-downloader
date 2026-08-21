@@ -39,6 +39,26 @@ If you don't have Python installed on your computer or you don't want to mess wi
 > [!IMPORTANT]
 > Downloading all animations can be quite slow. We're dealing with a total of 2346 animations, so don't expect it to be lighting fast.
 
+## Export settings
+
+Animations are requested from Mixamo with these preferences, matching the fields in Mixamo's own download dialog:
+
+| Setting | Value |
+|---|---|
+| Format | `FBX Binary(.fbx)` — one file per animation, never a pack or a zip |
+| Skin | Without Skin — animation only, no mesh and no bind pose |
+| Frames per Second | 30 |
+| Keyframe Reduction | none |
+
+The T-Pose is the one exception: it is exported *with* skin, since that is the only way to get the mesh.
+
+Every downloaded file is checked for the binary FBX signature before it is kept, so an error page, a login redirect or an unexpected archive is reported instead of being saved under a `.fbx` name and skipped by resume on the next run.
+
+The defaults live in `src/mixamo/client.py` (`DEFAULT_FORMAT`, `DEFAULT_FPS`, `DEFAULT_REDUCE_KF`) and can be overridden per client; Mixamo accepts `24`, `30` and `60` for the frame rate.
+
+> [!NOTE]
+> Changing the frame rate does not re-download animations you already have — resume skips them by name. Delete the ones you want re-exported, or untick **Resume**.
+
 ## Resuming a download
 
 Every finished animation is recorded in a `.mixamo_downloader.json` manifest inside the output folder, keyed by character. Leave **Resume** ticked and the next run skips whatever is already there — including FBX files downloaded before the manifest existed, and including a run that was stopped, crashed or lost its session half-way.
