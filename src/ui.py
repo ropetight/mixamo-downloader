@@ -461,6 +461,9 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
 
     def request_token(self):
         """Ask the embedded browser for the current Mixamo access token."""
+        if self.page is None:
+            return
+
         self.page.request_token()
 
     @QtCore.Slot()
@@ -761,31 +764,71 @@ class MixamoDownloaderUI(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event):
-        """Stop a running download before letting the window close.
+        """Stop a running download and shut everything down before closing.
 
         :param event: Close event
         :type event: QtGui.QCloseEvent
         """
         self._store_settings()
 
-        if self.thread is None:
-            event.accept()
-            return
+        if self.thread is not None:
+            answer = QtWidgets.QMessageBox.question(
+                self, "Download in progress",
+                "A download is still running. Stop it and quit?",
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No)
 
-        answer = QtWidgets.QMessageBox.question(
-            self, "Download in progress",
-            "A download is still running. Stop it and quit?",
-            QtWidgets.QMessageBox.StandardButton.Yes
-            | QtWidgets.QMessageBox.StandardButton.No)
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
 
-        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
-            event.ignore()
-            return
+            self.stop_worker()
 
-        self.worker.stop()
-        self.thread.quit()
-        # The worker wakes up within a second, so this wait is short. Anything
-        # already written stays on disk and is skipped on the next run.
-        self.thread.wait(10000)
-
+        self.shutdown()
         event.accept()
+
+    def stop_worker(self):
+        """Stop a running download and wait for its thread to finish."""
+        if self.worker is not None:
+            self.worker.stop()
+
+        if self.thread is None:
+            return
+
+        self.thread.quit()
+
+        # The worker checks the stop event between download chunks, so it
+        # normally comes back within a second. A socket stuck in a read can
+        # take until its timeout, hence the longer second wait.
+        if not self.thread.wait(5000):
+            self.log("warning", "Waiting for the current download to stop...")
+            QtWidgets.QApplication.processEvents()
+            self.thread.wait(60000)
+
+        # Anything already written stays on disk and is skipped next run.
+
+    def shutdown(self):
+        """Release everything that would otherwise keep the process alive.
+
+        Qt quits once the last window closes, but two things here are not
+        ordinary windows: a system tray icon is backed by a top-level window
+        on some desktops, and QtWebEngine keeps a render process running for
+        as long as its view and page exist. Both are torn down explicitly so
+        the application exits instead of idling with the window gone.
+        """
+        if self.tray is not None:
+            self.tray.hide()
+            self.tray.deleteLater()
+            self.tray = None
+
+        if self.browser is not None:
+            self.browser.stop()
+            self.browser.hide()
+            self.browser.deleteLater()
+            self.browser = None
+
+        if self.page is not None:
+            self.page.deleteLater()
+            self.page = None
+
+        QtWidgets.QApplication.quit()

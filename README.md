@@ -88,6 +88,8 @@ Animations that failed are recorded with their reason and are retried on the nex
 
 Progress, warnings and errors are shown in the log panel at the bottom of the window and, where the desktop supports it, as a notification when the run ends.
 
+Closing the window ends the process. A running download is stopped first (after asking), the tray icon and the embedded browser are released explicitly -- either one will otherwise keep Qt's event loop alive with the window gone -- and the last of QtWebEngine's helper threads is not waited on, so the shell prompt always comes back. `Ctrl+C` in the terminal works too.
+
 ## Layout
 
 ```
